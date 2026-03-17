@@ -25,3 +25,25 @@ export async function updateConfig(config) {
   if (!res.ok) throw new Error("Failed to update config");
   return res.json();
 }
+
+export async function fetchPrompts() {
+  const res = await fetch("/api/prompts");
+  if (!res.ok) throw new Error("Failed to fetch prompts");
+  return res.json();
+}
+
+export async function fetchPrompt(name) {
+  const res = await fetch(`/api/prompts/${name}`);
+  if (!res.ok) throw new Error("Failed to fetch prompt");
+  return res.json();
+}
+
+export async function updatePrompt(name, content) {
+  const res = await fetch(`/api/prompts/${name}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error("Failed to update prompt");
+  return res.json();
+}

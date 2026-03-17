@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchHealth } from "../api/ollama";
+import { fetchHealth } from "../api/llm";
 import { fetchFindingsSummary } from "../api/defectdojo";
 import { fetchReviews } from "../api/gitplatform";
 import StatusCard from "../components/StatusCard";
@@ -33,7 +33,7 @@ export default function Overview() {
               key={name}
               name={name}
               status={info.status}
-              detail={info.model || undefined}
+              detail={info.engine ? `Engine: ${info.engine}` : info.model || undefined}
             />
           ))}
           {health.isLoading && <p className="text-gray-500 text-sm col-span-3">Loading...</p>}

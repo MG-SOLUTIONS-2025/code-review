@@ -4,17 +4,20 @@ import { fetchFindings } from "../api/defectdojo";
 import FindingsTable from "../components/FindingsTable";
 
 const SEVERITIES = ["All", "Critical", "High", "Medium", "Low", "Info"];
+const SCAN_TYPES = ["All", "Semgrep", "Gitleaks", "Trivy", "Triage"];
 
 export default function ScanResults() {
   const [page, setPage] = useState(1);
   const [severity, setSeverity] = useState("All");
+  const [scanType, setScanType] = useState("All");
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["findings", page, severity],
+    queryKey: ["findings", page, severity, scanType],
     queryFn: () =>
       fetchFindings({
         page,
         severity: severity === "All" ? undefined : severity,
+        scan_type: scanType === "All" ? undefined : scanType,
       }),
   });
 
@@ -27,18 +30,32 @@ export default function ScanResults() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-white">Scan Results</h2>
-        <select
-          value={severity}
-          onChange={(e) => {
-            setSeverity(e.target.value);
-            setPage(1);
-          }}
-          className="bg-panel border border-border rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500"
-        >
-          {SEVERITIES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
+        <div className="flex gap-3">
+          <select
+            value={scanType}
+            onChange={(e) => {
+              setScanType(e.target.value);
+              setPage(1);
+            }}
+            className="bg-panel border border-border rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500"
+          >
+            {SCAN_TYPES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <select
+            value={severity}
+            onChange={(e) => {
+              setSeverity(e.target.value);
+              setPage(1);
+            }}
+            className="bg-panel border border-border rounded-lg px-3 py-2 text-sm text-gray-300 focus:outline-none focus:border-indigo-500"
+          >
+            {SEVERITIES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {isLoading && <p className="text-gray-500 text-sm">Loading findings...</p>}

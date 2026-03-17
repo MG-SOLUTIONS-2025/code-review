@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchModels, fetchConfig, updateConfig } from "../api/ollama";
+import { fetchModels, fetchConfig, updateConfig, fetchHealth, fetchPrompts, fetchPrompt, updatePrompt } from "../api/llm";
 
 export default function Settings() {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["models"], queryFn: fetchModels });
   const config = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const health = useQuery({ queryKey: ["health"], queryFn: fetchHealth });
+  const promptsList = useQuery({ queryKey: ["prompts"], queryFn: fetchPrompts });
 
   const [selectedModel, setSelectedModel] = useState("");
   const [autoReview, setAutoReview] = useState(false);
@@ -14,10 +16,16 @@ export default function Settings() {
   const [customInstructions, setCustomInstructions] = useState("");
   const [saved, setSaved] = useState(false);
 
+  // Prompt editor state
+  const [activePromptTab, setActivePromptTab] = useState(null);
+  const [promptContent, setPromptContent] = useState("");
+  const [promptSaved, setPromptSaved] = useState(false);
+
+  const engineInfo = health.data?.services?.llm;
+
   useEffect(() => {
     if (config.data?.config) {
       const c = config.data.config;
-      // TOML structure: [config] section has model, [pr_reviewer] has settings
       setSelectedModel(c.config?.model || "");
       const cmds = c.gitlab?.pr_commands || c.gitea?.pr_commands || [];
       setAutoReview(cmds.includes("/review"));
@@ -27,7 +35,23 @@ export default function Settings() {
     }
   }, [config.data]);
 
-  const mutation = useMutation({
+  // Load prompt content when tab changes
+  useEffect(() => {
+    if (activePromptTab) {
+      fetchPrompt(activePromptTab).then((data) => {
+        setPromptContent(data.content);
+      });
+    }
+  }, [activePromptTab]);
+
+  // Auto-select first prompt tab
+  useEffect(() => {
+    if (promptsList.data?.prompts?.length && !activePromptTab) {
+      setActivePromptTab(promptsList.data.prompts[0].name);
+    }
+  }, [promptsList.data, activePromptTab]);
+
+  const configMutation = useMutation({
     mutationFn: (cfg) => updateConfig(cfg),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["config"] });
@@ -36,15 +60,23 @@ export default function Settings() {
     },
   });
 
+  const promptMutation = useMutation({
+    mutationFn: ({ name, content }) => updatePrompt(name, content),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prompts"] });
+      setPromptSaved(true);
+      setTimeout(() => setPromptSaved(false), 2000);
+    },
+  });
+
   const handleSave = () => {
-    // Rebuild the TOML structure
     const currentConfig = config.data?.config || {};
     const prCommands = [
       ...(autoDescribe ? ["/describe"] : []),
       ...(autoReview ? ["/review"] : []),
       ...(autoImprove ? ["/improve"] : []),
     ];
-    mutation.mutate({
+    configMutation.mutate({
       ...currentConfig,
       config: {
         ...currentConfig.config,
@@ -56,9 +88,31 @@ export default function Settings() {
     });
   };
 
+  const handlePromptSave = () => {
+    if (activePromptTab) {
+      promptMutation.mutate({ name: activePromptTab, content: promptContent });
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-2xl">
       <h2 className="text-2xl font-bold text-white">Settings</h2>
+
+      {/* Inference Engine Badge */}
+      {engineInfo && (
+        <section className="space-y-2">
+          <label className="block text-sm font-medium text-gray-400">Inference Engine</label>
+          <div className="flex items-center gap-3">
+            <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-panel border border-border text-sm text-gray-300">
+              <span className={`w-2 h-2 rounded-full ${engineInfo.status === "healthy" ? "bg-emerald-400" : "bg-red-400"}`} />
+              {engineInfo.engine?.toUpperCase() || "Unknown"}
+            </span>
+            {engineInfo.model && (
+              <span className="text-xs text-gray-500">Model: {engineInfo.model}</span>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Model Selection */}
       <section className="space-y-2">
@@ -70,8 +124,8 @@ export default function Settings() {
         >
           <option value="">Select a model...</option>
           {models.data?.models?.map((m) => (
-            <option key={m.name} value={m.name}>
-              {m.name} {m.size ? `(${m.size})` : ""}
+            <option key={m.name || m.id} value={m.name || m.id}>
+              {m.name || m.id} {m.size ? `(${m.size})` : ""}
             </option>
           ))}
         </select>
@@ -112,18 +166,65 @@ export default function Settings() {
         />
       </section>
 
-      {/* Save */}
+      {/* Save Config */}
       <div className="flex items-center gap-4">
         <button
           onClick={handleSave}
-          disabled={mutation.isPending}
+          disabled={configMutation.isPending}
           className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
         >
-          {mutation.isPending ? "Saving..." : "Save Settings"}
+          {configMutation.isPending ? "Saving..." : "Save Settings"}
         </button>
         {saved && <span className="text-sm text-emerald-400">Settings saved.</span>}
-        {mutation.isError && <span className="text-sm text-red-400">Failed to save.</span>}
+        {configMutation.isError && <span className="text-sm text-red-400">Failed to save.</span>}
       </div>
+
+      {/* Prompt Template Editor */}
+      <section className="space-y-3 pt-4 border-t border-border">
+        <label className="block text-sm font-medium text-gray-400">Prompt Templates</label>
+        {promptsList.isLoading && <p className="text-xs text-gray-500">Loading prompts...</p>}
+
+        {promptsList.data?.prompts?.length > 0 && (
+          <>
+            {/* Tabs */}
+            <div className="flex gap-1 border-b border-border">
+              {promptsList.data.prompts.map((p) => (
+                <button
+                  key={p.name}
+                  onClick={() => setActivePromptTab(p.name)}
+                  className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                    activePromptTab === p.name
+                      ? "bg-panel border border-b-0 border-border text-white"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Editor */}
+            <textarea
+              value={promptContent}
+              onChange={(e) => setPromptContent(e.target.value)}
+              rows={12}
+              className="w-full bg-panel border border-border rounded-lg px-3 py-2.5 text-sm text-gray-300 font-mono focus:outline-none focus:border-indigo-500 resize-y"
+            />
+
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handlePromptSave}
+                disabled={promptMutation.isPending}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+              >
+                {promptMutation.isPending ? "Saving..." : "Save Prompt"}
+              </button>
+              {promptSaved && <span className="text-sm text-emerald-400">Prompt saved.</span>}
+              {promptMutation.isError && <span className="text-sm text-red-400">Failed to save prompt.</span>}
+            </div>
+          </>
+        )}
+      </section>
     </div>
   );
 }

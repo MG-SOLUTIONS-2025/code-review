@@ -55,6 +55,41 @@ jobs:
           name: trivy-report
           path: trivy_report.json
 
+  triage_findings:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [semgrep]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: semgrep-report
+      - name: Triage SAST Findings
+        run: |
+          pip install requests -q
+          python3 scripts/triage-findings.py \
+            --report semgrep_report.json \
+            --prompt-file config/prompts/triage.md \
+            --llm-url "http://${LLM_HOST:-ollama}:${LLM_PORT:-11434}" \
+            --model "${LLM_MODEL:-qwen2.5-coder:32b}" \
+            --engine "${INFERENCE_ENGINE:-ollama}" \
+            --git-platform gitea \
+            --git-url "${{ github.server_url }}" \
+            --git-token "${{ secrets.GIT_TOKEN }}" \
+            --project "${{ github.repository }}" \
+            --mr-id "${{ github.event.pull_request.number }}" \
+            --output triage_results.json
+        env:
+          INFERENCE_ENGINE: ${{ vars.INFERENCE_ENGINE }}
+          LLM_HOST: ${{ vars.LLM_HOST }}
+          LLM_PORT: ${{ vars.LLM_PORT }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: triage-results
+          path: triage_results.json
+
   ai_review:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -73,7 +108,7 @@ jobs:
   upload_results:
     if: always()
     runs-on: ubuntu-latest
-    needs: [semgrep, gitleaks, trivy]
+    needs: [semgrep, gitleaks, trivy, triage_findings]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -84,7 +119,8 @@ jobs:
           pip install requests -q
           for report in semgrep:semgrep_report.json:"Semgrep JSON Report" \
                         gitleaks:gitleaks_report.json:"Gitleaks Scan" \
-                        trivy:trivy_report.json:"Trivy Scan"; do
+                        trivy:trivy_report.json:"Trivy Scan" \
+                        triage:triage_results.json:"Generic Findings Import"; do
             IFS=: read -r name file scan_type <<< "$report"
             if [ -f "$file" ]; then
               python3 scripts/upload-to-defectdojo.py \

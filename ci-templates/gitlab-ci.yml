@@ -1,5 +1,6 @@
 stages:
   - security_scan
+  - triage_findings
   - ai_review
   - upload_results
 
@@ -46,6 +47,32 @@ trivy:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
+# --- SAST Triage (MR only) ---
+triage_findings:
+  stage: triage_findings
+  image: python:3.12-slim
+  needs: [semgrep]
+  script:
+    - pip install requests -q
+    - |
+      python3 scripts/triage-findings.py \
+        --report semgrep_report.json \
+        --prompt-file config/prompts/triage.md \
+        --llm-url "http://${LLM_HOST:-ollama}:${LLM_PORT:-11434}" \
+        --model "${LLM_MODEL:-qwen2.5-coder:32b}" \
+        --engine "${INFERENCE_ENGINE:-ollama}" \
+        --git-platform gitlab \
+        --git-url "${CI_SERVER_URL}" \
+        --git-token "${GIT_TOKEN}" \
+        --project "${CI_PROJECT_PATH}" \
+        --mr-id "${CI_MERGE_REQUEST_IID}" \
+        --output triage_results.json
+  artifacts:
+    paths: [triage_results.json]
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
 # --- AI Review (MR only) ---
 ai_review:
   stage: ai_review
@@ -85,3 +112,9 @@ upload_results:
       python3 scripts/upload-to-defectdojo.py \
         --file trivy_report.json --scan-type "Trivy Scan" \
         --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" || true
+    - |
+      if [ -f triage_results.json ]; then
+        python3 scripts/upload-to-defectdojo.py \
+          --file triage_results.json --scan-type "Generic Findings Import" \
+          --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" || true
+      fi

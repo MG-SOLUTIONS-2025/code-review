@@ -1,0 +1,221 @@
+services:
+  # === LLM Serving ===
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  # === AI Code Review ===
+  pr-agent:
+    image: codiumai/pr-agent:0.31-${GIT_PLATFORM:-gitlab}_webhook
+    container_name: pr-agent
+    env_file: .env
+    environment:
+      CONFIG.MODEL: "ollama/${OLLAMA_MODEL:-qwen2.5-coder:32b}"
+      OLLAMA.API_BASE: "http://ollama:11434"
+      OPENAI.KEY: "not-needed"
+      ${GIT_PLATFORM:-GITLAB}.URL: "${GIT_BASE_URL}"
+      ${GIT_PLATFORM:-GITLAB}.PERSONAL_ACCESS_TOKEN: "${GIT_TOKEN}"
+      WEBHOOK_SECRET: "${PR_AGENT_WEBHOOK_SECRET}"
+    volumes:
+      - ./config/pr-agent/configuration.toml:/app/pr_agent/settings/configuration.toml:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  # === DefectDojo ===
+  defectdojo-db:
+    image: postgres:16-alpine
+    container_name: defectdojo-db
+    environment:
+      POSTGRES_DB: defectdojo
+      POSTGRES_USER: defectdojo
+      POSTGRES_PASSWORD: defectdojo
+    volumes:
+      - defectdojo-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U defectdojo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  defectdojo-redis:
+    image: redis:7-alpine
+    container_name: defectdojo-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  defectdojo-initializer:
+    image: defectdojo/defectdojo-django:2.41.3
+    container_name: defectdojo-initializer
+    depends_on:
+      defectdojo-db:
+        condition: service_healthy
+      defectdojo-redis:
+        condition: service_healthy
+    environment:
+      DD_DATABASE_URL: "postgresql://defectdojo:defectdojo@defectdojo-db:5432/defectdojo"
+      DD_CELERY_BROKER_URL: "redis://defectdojo-redis:6379/0"
+      DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
+      DD_INITIALIZE: "true"
+      DD_ADMIN_PASSWORD: "${DEFECTDOJO_ADMIN_PASSWORD:-changeme}"
+    entrypoint: ["/entrypoint-initializer.sh"]
+    networks:
+      - code-review-net
+
+  defectdojo-web:
+    image: defectdojo/defectdojo-django:2.41.3
+    container_name: defectdojo-web
+    depends_on:
+      defectdojo-initializer:
+        condition: service_completed_successfully
+    environment:
+      DD_DATABASE_URL: "postgresql://defectdojo:defectdojo@defectdojo-db:5432/defectdojo"
+      DD_CELERY_BROKER_URL: "redis://defectdojo-redis:6379/0"
+      DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
+      DD_ALLOWED_HOSTS: "*"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  defectdojo-celery-beat:
+    image: defectdojo/defectdojo-django:2.41.3
+    container_name: defectdojo-celery-beat
+    depends_on:
+      defectdojo-initializer:
+        condition: service_completed_successfully
+    environment:
+      DD_DATABASE_URL: "postgresql://defectdojo:defectdojo@defectdojo-db:5432/defectdojo"
+      DD_CELERY_BROKER_URL: "redis://defectdojo-redis:6379/0"
+      DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
+    entrypoint: ["/entrypoint-celery-beat.sh"]
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  defectdojo-celery-worker:
+    image: defectdojo/defectdojo-django:2.41.3
+    container_name: defectdojo-celery-worker
+    depends_on:
+      defectdojo-initializer:
+        condition: service_completed_successfully
+    environment:
+      DD_DATABASE_URL: "postgresql://defectdojo:defectdojo@defectdojo-db:5432/defectdojo"
+      DD_CELERY_BROKER_URL: "redis://defectdojo-redis:6379/0"
+      DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
+    entrypoint: ["/entrypoint-celery-worker.sh"]
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  # === API Gateway ===
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    env_file: .env
+    environment:
+      OLLAMA_URL: "http://ollama:11434"
+      DEFECTDOJO_URL: "http://defectdojo-web:8080"
+      PR_AGENT_URL: "http://pr-agent:3000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  # === Dashboard ===
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    environment:
+      VITE_API_URL: "/api"
+    ports:
+      - "5173:3000"
+    depends_on:
+      - api-gateway
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  # === Reverse Proxy ===
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - dashboard
+      - api-gateway
+      - defectdojo-web
+      - pr-agent
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+volumes:
+  ollama-data:
+  defectdojo-db-data:
+
+networks:
+  code-review-net:
+    driver: bridge

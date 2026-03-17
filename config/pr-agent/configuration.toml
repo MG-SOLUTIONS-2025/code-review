@@ -1,0 +1,27 @@
+[config]
+model = "ollama/qwen2.5-coder:32b"
+fallback_models = ["ollama/qwen2.5-coder:7b"]
+custom_model_max_tokens = 128000
+
+[ollama]
+api_base = "http://ollama:11434"
+
+[pr_description]
+publish_labels = true
+add_original_user_description = true
+
+[pr_reviewer]
+require_security_review = true
+require_tests_review = true
+num_code_suggestions = 4
+
+[pr_code_suggestions]
+num_code_suggestions = 4
+
+[gitlab]
+pr_commands = ["/describe", "/review", "/improve"]
+handle_push_trigger = true
+push_commands = ["/describe", "/review"]
+
+[gitea]
+pr_commands = ["/describe", "/review", "/improve"]

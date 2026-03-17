@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+paths = [
+    '''test/fixtures/''',
+    '''docs/examples/''',
+    '''\.env\.example$''',
+    '''research\.md$''',
+]

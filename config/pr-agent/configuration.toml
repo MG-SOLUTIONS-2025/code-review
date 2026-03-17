@@ -19,9 +19,9 @@ num_code_suggestions = 4
 num_code_suggestions = 4
 
 [gitlab]
-pr_commands = ["/describe", "/review", "/improve"]
+pr_commands = ["/describe", "/review", "/improve", "/ask"]
 handle_push_trigger = true
 push_commands = ["/describe", "/review"]
 
 [gitea]
-pr_commands = ["/describe", "/review", "/improve"]
+pr_commands = ["/describe", "/review", "/improve", "/ask"]

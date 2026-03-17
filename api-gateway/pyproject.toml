@@ -1,0 +1,18 @@
+[project]
+name = "api-gateway"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "httpx>=0.28",
+    "toml>=0.10",
+    "python-dotenv>=1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gateway"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

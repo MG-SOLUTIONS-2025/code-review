@@ -1,0 +1,97 @@
+name: Security Scan & AI Review
+
+on:
+  push:
+    branches: ["*"]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        run: semgrep scan . --config="p/default" --config="p/owasp-top-ten"
+          --metrics="off" --json -o semgrep_report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep_report.json
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    container:
+      image: zricethezav/gitleaks:latest
+      options: --entrypoint ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run Gitleaks
+        run: gitleaks detect --source . -f json -r gitleaks_report.json
+          --config=config/gitleaks/.gitleaks.toml --exit-code 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitleaks-report
+          path: gitleaks_report.json
+
+  trivy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    container:
+      image: aquasec/trivy:latest
+      options: --entrypoint ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy
+        run: trivy fs --format json --output trivy_report.json --severity HIGH,CRITICAL .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy_report.json
+
+  ai_review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [semgrep, gitleaks]
+    steps:
+      - name: Trigger PR-Agent Review
+        run: |
+          curl -s -X POST "http://${PR_AGENT_HOST:-pr-agent}:3000/api/v1/gitea_webhooks" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"action\": \"opened\",
+              \"number\": ${{ github.event.pull_request.number }},
+              \"repository\": {\"html_url\": \"${{ github.server_url }}/${{ github.repository }}\"}
+            }"
+
+  upload_results:
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [semgrep, gitleaks, trivy]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Upload to DefectDojo
+        run: |
+          pip install requests -q
+          for report in semgrep:semgrep_report.json:"Semgrep JSON Report" \
+                        gitleaks:gitleaks_report.json:"Gitleaks Scan" \
+                        trivy:trivy_report.json:"Trivy Scan"; do
+            IFS=: read -r name file scan_type <<< "$report"
+            if [ -f "$file" ]; then
+              python3 scripts/upload-to-defectdojo.py \
+                --file "$file" --scan-type "$scan_type" \
+                --engagement-id "${{ vars.DEFECTDOJO_ENGAGEMENT_ID }}" || true
+            fi
+          done
+        env:
+          DEFECTDOJO_URL: ${{ vars.DEFECTDOJO_URL }}/api/v2/import-scan/
+          DEFECTDOJO_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}

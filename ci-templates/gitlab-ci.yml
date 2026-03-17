@@ -1,0 +1,87 @@
+stages:
+  - security_scan
+  - ai_review
+  - upload_results
+
+variables:
+  DEFECTDOJO_URL: "${DEFECTDOJO_URL}/api/v2/import-scan/"
+  DEFECTDOJO_ENGAGEMENT_ID: "${DEFECTDOJO_ENGAGEMENT_ID}"
+
+# --- SAST ---
+semgrep:
+  stage: security_scan
+  image: semgrep/semgrep:latest
+  script:
+    - semgrep scan . --config="p/default" --config="p/owasp-top-ten"
+      --metrics="off" --json -o semgrep_report.json
+  artifacts:
+    paths: [semgrep_report.json]
+    when: always
+
+# --- Secrets ---
+gitleaks:
+  stage: security_scan
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . -f json -r gitleaks_report.json
+      --config=config/gitleaks/.gitleaks.toml --exit-code 1
+  artifacts:
+    paths: [gitleaks_report.json]
+    when: always
+  allow_failure: false
+
+# --- Dependencies (MR only) ---
+trivy:
+  stage: security_scan
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  script:
+    - trivy fs --format json --output trivy_report.json --severity HIGH,CRITICAL .
+  artifacts:
+    paths: [trivy_report.json]
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# --- AI Review (MR only) ---
+ai_review:
+  stage: ai_review
+  image: curlimages/curl:latest
+  script:
+    - |
+      curl -s -X POST "http://${PR_AGENT_HOST:-pr-agent}:3000/api/v1/gitlab_webhooks" \
+        -H "Content-Type: application/json" \
+        -H "X-Gitlab-Token: ${PR_AGENT_WEBHOOK_SECRET}" \
+        -d "{
+          \"object_kind\": \"merge_request\",
+          \"project\": {\"web_url\": \"${CI_PROJECT_URL}\"},
+          \"object_attributes\": {
+            \"iid\": ${CI_MERGE_REQUEST_IID},
+            \"action\": \"open\"
+          }
+        }"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# --- Upload to DefectDojo ---
+upload_results:
+  stage: upload_results
+  image: python:3.12-slim
+  when: always
+  script:
+    - pip install requests -q
+    - |
+      python3 scripts/upload-to-defectdojo.py \
+        --file semgrep_report.json --scan-type "Semgrep JSON Report" \
+        --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" || true
+    - |
+      python3 scripts/upload-to-defectdojo.py \
+        --file gitleaks_report.json --scan-type "Gitleaks Scan" \
+        --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" || true
+    - |
+      python3 scripts/upload-to-defectdojo.py \
+        --file trivy_report.json --scan-type "Trivy Scan" \
+        --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" || true

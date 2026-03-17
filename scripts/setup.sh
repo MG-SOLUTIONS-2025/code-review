@@ -47,8 +47,8 @@ if command -v nvidia-smi &>/dev/null; then
 fi
 
 if [ "$GPU_AVAILABLE" = false ]; then
-    warn "No NVIDIA GPU detected. Ollama will run on CPU (very slow)."
-    warn "Strongly recommend using OLLAMA_MODEL=qwen2.5-coder:7b in .env"
+    warn "No NVIDIA GPU detected. LLM will run on CPU (very slow)."
+    warn "Strongly recommend using a smaller model in .env"
 fi
 
 # Generate htpasswd for nginx basic auth
@@ -62,34 +62,66 @@ else
     echo "${BASIC_AUTH_USER:-admin}:${HASH}" > "$HTPASSWD_FILE"
 fi
 
-# Step 1: Start Ollama
-info "Starting Ollama..."
-docker compose up -d ollama
-info "Waiting for Ollama to be ready..."
-until docker compose exec ollama curl -sf http://localhost:11434/api/tags &>/dev/null; do
-    sleep 2
-done
-info "Ollama is ready."
+ENGINE="${INFERENCE_ENGINE:-ollama}"
+COMPOSE_PROFILES=""
 
-# Step 2: Pull model
-MODEL="${OLLAMA_MODEL:-qwen2.5-coder:32b}"
-info "Pulling model: $MODEL (this may take a while)..."
-docker compose exec ollama ollama pull "$MODEL"
-
-# Step 3: Verify model
-info "Verifying model is loaded..."
-if docker compose exec ollama curl -sf http://localhost:11434/api/tags | grep -q "$MODEL"; then
-    info "Model $MODEL is ready."
+# Step 1: Start LLM engine
+if [ "$ENGINE" = "vllm" ]; then
+    info "Starting vLLM inference engine..."
+    COMPOSE_PROFILES="--profile vllm"
+    docker compose $COMPOSE_PROFILES up -d vllm
+    info "Waiting for vLLM to load model (this may take several minutes)..."
+    until docker compose exec vllm curl -sf http://localhost:8000/v1/models &>/dev/null; do
+        sleep 5
+    done
+    info "vLLM is ready."
 else
-    error "Model $MODEL not found after pull."
-    exit 1
+    info "Starting Ollama..."
+    docker compose up -d ollama
+    info "Waiting for Ollama to be ready..."
+    until docker compose exec ollama curl -sf http://localhost:11434/api/tags &>/dev/null; do
+        sleep 2
+    done
+    info "Ollama is ready."
+
+    # Pull model
+    MODEL="${OLLAMA_MODEL:-qwen2.5-coder:32b}"
+    info "Pulling model: $MODEL (this may take a while)..."
+    docker compose exec ollama ollama pull "$MODEL"
+
+    # Verify model
+    info "Verifying model is loaded..."
+    if docker compose exec ollama curl -sf http://localhost:11434/api/tags | grep -q "$MODEL"; then
+        info "Model $MODEL is ready."
+    else
+        error "Model $MODEL not found after pull."
+        exit 1
+    fi
 fi
 
-# Step 4: Start all services
-info "Starting all services..."
-docker compose up -d
+# Step 2: Optional TabbyML
+if [ "${ENABLE_TABBY:-false}" = "true" ]; then
+    info "Starting TabbyML for code intelligence..."
+    COMPOSE_PROFILES="${COMPOSE_PROFILES} --profile tabby"
+    docker compose --profile tabby up -d tabby
+    info "Waiting for TabbyML to be ready..."
+    RETRIES=0
+    until docker compose exec tabby curl -sf http://localhost:8080/v1/health &>/dev/null || [ $RETRIES -eq 30 ]; do
+        sleep 5
+        RETRIES=$((RETRIES + 1))
+    done
+    if [ $RETRIES -eq 30 ]; then
+        warn "TabbyML may still be initializing. Check: docker compose logs tabby"
+    else
+        info "TabbyML is ready."
+    fi
+fi
 
-# Step 5: Wait for DefectDojo
+# Step 3: Start all services
+info "Starting all services..."
+docker compose $COMPOSE_PROFILES up -d
+
+# Step 4: Wait for DefectDojo
 info "Waiting for DefectDojo to initialize (this takes 1-2 minutes)..."
 RETRIES=0
 until docker compose exec defectdojo-web curl -sf http://localhost:8080/api/v2/ &>/dev/null || [ $RETRIES -eq 30 ]; do
@@ -105,10 +137,18 @@ fi
 
 info ""
 info "=== Setup Complete ==="
+info "Engine:      ${ENGINE}"
 info "Dashboard:   http://localhost:5173"
 info "API Gateway: http://localhost:8000"
 info "DefectDojo:  http://localhost:8080  (admin / ${DEFECTDOJO_ADMIN_PASSWORD:-changeme})"
-info "Ollama:      http://localhost:11434"
+if [ "$ENGINE" = "vllm" ]; then
+    info "vLLM:        http://localhost:8001"
+else
+    info "Ollama:      http://localhost:11434"
+fi
+if [ "${ENABLE_TABBY:-false}" = "true" ]; then
+    info "TabbyML:     http://localhost:8082"
+fi
 info "Nginx Proxy: http://localhost:80"
 info ""
 info "Next steps:"

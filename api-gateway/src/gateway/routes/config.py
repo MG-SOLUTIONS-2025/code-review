@@ -4,13 +4,11 @@ from pathlib import Path
 import toml
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
+from gateway.utils.ratelimit import limiter
 from gateway.utils.sanitize import sanitize_prompt_input
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 CONFIG_PATH = Path(
     os.getenv("PR_AGENT_CONFIG_PATH", "/app/config/pr-agent/configuration.toml")

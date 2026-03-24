@@ -73,15 +73,15 @@ def _parse_unified_diff(text: str) -> list[dict]:
     return [f for f in files if f["filename"]]
 
 
+def _count_additions_deletions(patch_lines: list[str]) -> tuple[int, int]:
+    additions = sum(1 for l in patch_lines if l.startswith("+") and not l.startswith("+++"))
+    deletions = sum(1 for l in patch_lines if l.startswith("-") and not l.startswith("---"))
+    return additions, deletions
+
+
 def _finalize_file(file: dict, patch_lines: list[str]) -> None:
-    patch = "\n".join(patch_lines)
-    file["patch"] = patch
-    file["additions"] = sum(
-        1 for l in patch_lines if l.startswith("+") and not l.startswith("+++")
-    )
-    file["deletions"] = sum(
-        1 for l in patch_lines if l.startswith("-") and not l.startswith("---")
-    )
+    file["patch"] = "\n".join(patch_lines)
+    file["additions"], file["deletions"] = _count_additions_deletions(patch_lines)
 
 
 class GitLabClient(GitClient):
@@ -166,9 +166,7 @@ class GitLabClient(GitClient):
                     status = "modified"
 
                 patch = item.get("diff", "")
-                patch_lines = patch.splitlines()
-                additions = sum(1 for l in patch_lines if l.startswith("+") and not l.startswith("+++"))
-                deletions = sum(1 for l in patch_lines if l.startswith("-") and not l.startswith("---"))
+                additions, deletions = _count_additions_deletions(patch.splitlines())
 
                 all_files.append({
                     "filename": item.get("new_path") or item.get("old_path", ""),
@@ -393,7 +391,7 @@ def create_git_client() -> GitClient:
     platform = os.getenv("GIT_PLATFORM", "gitlab").lower()
     base_url = os.getenv("GIT_BASE_URL", "http://localhost:3000")
     token = os.getenv("GIT_TOKEN", "")
-    logger.info("Creating git client: platform={} base_url={}", platform, base_url)
+    logger.debug("Creating git client: platform={} base_url={}", platform, base_url)
     if platform == "gitea":
         return GiteaClient(base_url, token)
     return GitLabClient(base_url, token)

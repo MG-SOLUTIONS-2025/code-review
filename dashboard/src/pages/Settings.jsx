@@ -71,21 +71,20 @@ export default function Settings() {
 
   const handleSave = () => {
     const cfg = config.data?.config || {};
-    const currentConfig = cfg;
     const prCommands = [
       ...(autoDescribe ? ["/describe"] : []),
       ...(autoReview ? ["/review"] : []),
       ...(autoImprove ? ["/improve"] : []),
     ];
     configMutation.mutate({
-      ...currentConfig,
+      ...cfg,
       config: {
-        ...currentConfig.config,
+        ...(cfg.config || {}),
         model: selectedModel,
         custom_instructions: customInstructions,
       },
-      gitlab: { ...(currentConfig.gitlab || {}), pr_commands: prCommands },
-      gitea: { ...(currentConfig.gitea || {}), pr_commands: prCommands },
+      gitlab: { ...(cfg.gitlab || {}), pr_commands: prCommands },
+      gitea: { ...(cfg.gitea || {}), pr_commands: prCommands },
     });
   };
 

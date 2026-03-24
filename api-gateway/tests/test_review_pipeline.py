@@ -14,7 +14,7 @@ from gateway.services.review_pipeline import (
     _format_agent_prompt,
     _load_prompt,
     _parse_issues,
-    _parse_review_comment,
+    parse_review_comment,
     _review_locks,
     _should_skip_file,
     get_last_reviewed_sha,
@@ -508,7 +508,7 @@ class TestBuildComment:
 
 
 # ---------------------------------------------------------------------------
-# _parse_review_comment
+# parse_review_comment
 # ---------------------------------------------------------------------------
 
 
@@ -522,7 +522,7 @@ class TestParseReviewComment:
             "| `a.py` | ✅ APPROVED | — |\n"
             "| `b.py` | 🔍 NEEDS_REVIEW | 2 |\n"
         )
-        result = _parse_review_comment(body)
+        result = parse_review_comment(body)
         assert result is not None
         assert result["head_sha"] == "abc1234"
         assert len(result["files"]) == 2
@@ -533,16 +533,16 @@ class TestParseReviewComment:
         assert result["files"][1]["issue_count"] == 2
 
     def test_no_sha_tag(self):
-        assert _parse_review_comment("Just a regular comment") is None
+        assert parse_review_comment("Just a regular comment") is None
 
     def test_row_with_dash_issue_count(self):
         body = "<!-- ai-review-sha: deadbeef -->\n| `c.py` | ✅ APPROVED | — |\n"
-        result = _parse_review_comment(body)
+        result = parse_review_comment(body)
         assert result["files"][0]["issue_count"] == 0
 
     def test_row_with_invalid_issue_count(self):
         body = "<!-- ai-review-sha: deadbeef -->\n| `c.py` | 🔍 NEEDS_REVIEW | N/A |\n"
-        result = _parse_review_comment(body)
+        result = parse_review_comment(body)
         assert result["files"][0]["issue_count"] == 0
 
 
@@ -811,6 +811,39 @@ class TestReviewLocks:
         assert "p1/1" in _review_locks
         assert "p1/2" in _review_locks
         assert isinstance(_review_locks["p1/1"], asyncio.Lock)
+
+    @pytest.mark.asyncio
+    async def test_lock_eviction_when_full(self, mock_git_client, mock_llm_client, tmp_path):
+        """When _review_locks exceeds _MAX_REVIEW_LOCKS, oldest entry is evicted."""
+        prompt_s = tmp_path / "summarize.md"
+        prompt_s.write_text("s")
+        prompt_r = tmp_path / "review.md"
+        prompt_r.write_text("r")
+
+        mock_git_client.get_head_sha.return_value = "abc1234567"
+        mock_git_client.get_review_comments.return_value = []
+        mock_git_client.get_diff.return_value = []
+
+        git_cm = AsyncMock()
+        git_cm.__aenter__ = AsyncMock(return_value=mock_git_client)
+        git_cm.__aexit__ = AsyncMock(return_value=None)
+
+        llm_cm = AsyncMock()
+        llm_cm.__aenter__ = AsyncMock(return_value=mock_llm_client)
+        llm_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("gateway.services.review_pipeline.create_git_client", return_value=git_cm), \
+             patch("gateway.services.review_pipeline.LLMClient", return_value=llm_cm), \
+             patch.object(pipeline, "PROMPTS_DIR", tmp_path), \
+             patch.object(pipeline, "_MAX_REVIEW_LOCKS", 2):
+            await run_review({"id": 1, "project_id": "p1"})
+            await run_review({"id": 2, "project_id": "p2"})
+            # This should evict p1/1
+            await run_review({"id": 3, "project_id": "p3"})
+
+        assert "p1/1" not in _review_locks
+        assert "p2/2" in _review_locks
+        assert "p3/3" in _review_locks
 
     @pytest.mark.asyncio
     async def test_lock_reused_for_same_mr(self, mock_git_client, mock_llm_client, tmp_path):

@@ -1,17 +1,16 @@
+import os
 import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, field_validator
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
+from gateway.utils.ratelimit import limiter
 from gateway.utils.sanitize import sanitize_prompt_input
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
-PROMPTS_DIR = Path("/app/config/prompts")
+PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", "/app/config/prompts"))
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 _MAX_CONTENT_LEN = 50_000
@@ -62,4 +61,7 @@ async def update_prompt(name: str, body: PromptUpdate, request: Request):
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     path = PROMPTS_DIR / f"{name}.md"
     path.write_text(sanitized_content)
+    # Invalidate cached prompt in review pipeline
+    from gateway.services.review_pipeline import _load_prompt
+    _load_prompt.cache_clear()
     return {"status": "saved", "name": name}

@@ -95,7 +95,7 @@ class LLMClient:
         self._client: httpx.AsyncClient | None = None
         self.engine = INFERENCE_ENGINE
         self._base_url = VLLM_URL if self.engine == "vllm" else OLLAMA_URL
-        logger.info("LLM engine selected: {} at {}", self.engine, self._base_url)
+        logger.debug("LLM engine selected: {} at {}", self.engine, self._base_url)
 
     async def __aenter__(self):
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=120)
@@ -138,8 +138,7 @@ class LLMClient:
         token_budget: int | None = None,
     ) -> dict:
         if token_budget is not None:
-            if count_tokens(messages) > token_budget:
-                messages = trim_messages_to_budget(messages, token_budget)
+            messages = trim_messages_to_budget(messages, token_budget)
 
         async with get_llm_semaphore():
             try:

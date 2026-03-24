@@ -34,6 +34,7 @@ async def _check_simple(name: str, url: str) -> dict:
 
 
 async def _check_llm() -> dict:
+    from gateway.services.llm import INFERENCE_ENGINE
     try:
         async with LLMClient() as client:
             models = await client.list_models()
@@ -48,8 +49,7 @@ async def _check_llm() -> dict:
         logger.error("LLM health check connection refused")
     except Exception as e:
         logger.error("LLM health check error: {}", e)
-    async with LLMClient() as client:
-        return {"engine": client.engine, "status": "unreachable", "model": None}
+    return {"engine": INFERENCE_ENGINE, "status": "unreachable", "model": None}
 
 
 async def _check_tabby() -> dict | None:

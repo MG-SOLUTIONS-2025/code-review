@@ -1,23 +1,22 @@
+import asyncio
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from gateway.services.git_platform import create_git_client
 from gateway.services.review_pipeline import (
     ReviewPipelineError,
-    _parse_review_comment,
+    parse_review_comment,
     get_last_reviewed_sha,
     run_review,
 )
 from gateway.utils.auth import verify_gateway_token
+from gateway.utils.ratelimit import limiter
 from gateway.utils.sanitize import sanitize_prompt_input
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 _GIT_PLATFORM = os.getenv("GIT_PLATFORM", "gitlab").lower()
 
@@ -69,10 +68,11 @@ async def get_reviews(
     try:
         async with create_git_client() as client:
             mrs = await client.list_merge_requests(limit=limit, offset=offset)
+            all_comments = await asyncio.gather(
+                *(client.get_review_comments(mr) for mr in mrs)
+            )
             results = []
-            for mr in mrs:
-                comments = await client.get_review_comments(mr)
-                # Normalize project_id for Gitea (owner/repo) to match trigger API
+            for mr, comments in zip(mrs, all_comments):
                 if _GIT_PLATFORM == "gitea" and "project_id" not in mr:
                     mr["project_id"] = f"{mr.get('owner', '')}/{mr.get('repo_name', '')}"
                 results.append({**mr, "platform": _GIT_PLATFORM, "review_comments": comments})
@@ -119,7 +119,7 @@ async def get_review_result(
             comments = await client.get_review_comments(mr)
         for comment in comments:
             body = comment.get("body", "")
-            parsed = _parse_review_comment(body)
+            parsed = parse_review_comment(body)
             if parsed:
                 parsed["posted_at"] = comment.get("created_at", "")
                 return parsed

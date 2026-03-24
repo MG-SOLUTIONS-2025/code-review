@@ -51,6 +51,7 @@ SKIP_EXTENSIONS = frozenset(
 # Constants / patterns
 # ---------------------------------------------------------------------------
 
+_MAX_REVIEW_LOCKS = 100
 _review_locks: dict[str, asyncio.Lock] = {}
 _REVIEW_SHA_TAG = "ai-review-sha"
 _SHA_PATTERN = re.compile(r"<!-- ai-review-sha: ([a-f0-9]{7,40}) -->")
@@ -323,7 +324,7 @@ def _build_comment(file_results: list[dict], head_sha: str, model: str) -> str:
     return "\n".join(lines)
 
 
-def _parse_review_comment(body: str) -> dict | None:
+def parse_review_comment(body: str) -> dict | None:
     """Parse a previously posted AI review comment into a structured summary."""
     sha_m = _SHA_PATTERN.search(body)
     if not sha_m:
@@ -382,6 +383,9 @@ async def run_review(mr: dict, force: bool = False) -> dict:
     """Orchestrate the full review pipeline for one MR/PR."""
     mr_key = f"{mr.get('project_id', '')}/{mr.get('id', '')}"
     if mr_key not in _review_locks:
+        if len(_review_locks) >= _MAX_REVIEW_LOCKS:
+            oldest = next(iter(_review_locks))
+            del _review_locks[oldest]
         _review_locks[mr_key] = asyncio.Lock()
     async with _review_locks[mr_key]:
         try:

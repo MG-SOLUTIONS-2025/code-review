@@ -3,22 +3,33 @@ import os
 
 import httpx
 from fastapi import APIRouter
+from loguru import logger
 
 from gateway.services.llm import LLMClient
 
 router = APIRouter()
 
-DEFECTDOJO_URL = os.getenv("DEFECTDOJO_URL", "http://defectdojo-web:8080")
+DEFECTDOJO_URL = os.getenv("DEFECTDOJO_URL", "http://defectdojo-web:8081")
 PR_AGENT_URL = os.getenv("PR_AGENT_URL", "http://pr-agent:3000")
 TABBY_URL = os.getenv("TABBY_URL", "")
 
 
-async def _check_simple(url: str) -> dict:
+async def _check_simple(name: str, url: str) -> dict:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(url)
-            return {"status": "healthy" if resp.status_code < 400 else "unhealthy"}
-    except Exception:
+            if 200 <= resp.status_code < 300:
+                return {"status": "healthy"}
+            logger.warning("{} health check failed: HTTP {}", name, resp.status_code)
+            return {"status": "unhealthy"}
+    except httpx.TimeoutException:
+        logger.error("{} health check timed out (url={})", name, url)
+        return {"status": "unreachable"}
+    except httpx.ConnectError:
+        logger.error("{} health check connection refused (url={})", name, url)
+        return {"status": "unreachable"}
+    except Exception as e:
+        logger.error("{} health check error: {}", name, e)
         return {"status": "unreachable"}
 
 
@@ -31,28 +42,28 @@ async def _check_llm() -> dict:
             else:
                 model_name = models[0]["name"] if models else None
             return {"engine": client.engine, "status": "healthy", "model": model_name}
-    except Exception:
-        async with LLMClient() as client:
-            return {"engine": client.engine, "status": "unreachable", "model": None}
+    except httpx.TimeoutException:
+        logger.error("LLM health check timed out")
+    except httpx.ConnectError:
+        logger.error("LLM health check connection refused")
+    except Exception as e:
+        logger.error("LLM health check error: {}", e)
+    async with LLMClient() as client:
+        return {"engine": client.engine, "status": "unreachable", "model": None}
 
 
 async def _check_tabby() -> dict | None:
     if not TABBY_URL:
         return None
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{TABBY_URL}/v1/health")
-            return {"status": "healthy" if resp.status_code < 400 else "unhealthy"}
-    except Exception:
-        return {"status": "unreachable"}
+    return await _check_simple("Tabby", f"{TABBY_URL}/v1/health")
 
 
 @router.get("/health")
 async def health():
     llm_result, pr_agent_result, defectdojo_result, tabby_result = await asyncio.gather(
         _check_llm(),
-        _check_simple(f"{PR_AGENT_URL}/"),
-        _check_simple(f"{DEFECTDOJO_URL}/api/v2/"),
+        _check_simple("PR-Agent", f"{PR_AGENT_URL}/"),
+        _check_simple("DefectDojo", f"{DEFECTDOJO_URL}/api/v2/"),
         _check_tabby(),
     )
     services = {

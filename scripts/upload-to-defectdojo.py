@@ -3,8 +3,11 @@
 import argparse
 import os
 import sys
+import time
 
 import requests
+
+MAX_UPLOAD_SIZE_MB = 50
 
 
 def upload_scan(
@@ -14,9 +17,18 @@ def upload_scan(
     defectdojo_url: str,
     api_token: str,
 ) -> bool:
-    url = defectdojo_url.rstrip("/")
-    if not url.endswith("/import-scan/"):
-        url = f"{url}/api/v2/import-scan/"
+    from urllib.parse import urljoin
+
+    base = defectdojo_url.rstrip("/") + "/"
+    url = urljoin(base, "api/v2/import-scan/")
+
+    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    if file_size_mb > MAX_UPLOAD_SIZE_MB:
+        print(
+            f"Error: {file_path} is {file_size_mb:.1f} MB, exceeds {MAX_UPLOAD_SIZE_MB} MB limit",
+            file=sys.stderr,
+        )
+        return False
 
     headers = {"Authorization": f"Token {api_token}"}
     data = {
@@ -27,17 +39,29 @@ def upload_scan(
         "verified": "false",
     }
 
-    with open(file_path, "rb") as f:
-        resp = requests.post(url, headers=headers, data=data, files={"file": f})
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            with open(file_path, "rb") as f:
+                resp = requests.post(url, headers=headers, data=data, files={"file": f})
+            if resp.status_code in (200, 201):
+                print(f"Uploaded {file_path} ({scan_type}): HTTP {resp.status_code}")
+                return True
+            print(
+                f"Failed to upload {file_path}: HTTP {resp.status_code} - {resp.text}",
+                file=sys.stderr,
+            )
+            return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"Upload connection error on attempt {attempt}/3: {e}", file=sys.stderr)
+            last_exc = e
+        except requests.exceptions.Timeout as e:
+            print(f"Upload timeout on attempt {attempt}/3: {e}", file=sys.stderr)
+            last_exc = e
+        if attempt < 3:
+            time.sleep(2 ** attempt)
 
-    if resp.status_code in (200, 201):
-        print(f"Uploaded {file_path} ({scan_type}): HTTP {resp.status_code}")
-        return True
-
-    print(
-        f"Failed to upload {file_path}: HTTP {resp.status_code} - {resp.text}",
-        file=sys.stderr,
-    )
+    print(f"Upload failed after 3 attempts: {last_exc}", file=sys.stderr)
     return False
 
 

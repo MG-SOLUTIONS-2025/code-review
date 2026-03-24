@@ -1,0 +1,6 @@
+# Local override: don't wait for ollama to be healthy (slow on CPU)
+services:
+  api-gateway:
+    depends_on:
+      ollama:
+        condition: service_started

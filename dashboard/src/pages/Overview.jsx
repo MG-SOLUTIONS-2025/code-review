@@ -68,7 +68,7 @@ export default function Overview() {
         {reviews.isError && <p className="text-red-400 text-sm">Failed to load reviews.</p>}
         <div className="space-y-3">
           {reviews.data?.reviews?.slice(0, 5).map((r) => (
-            <ReviewCard key={r.id} review={r} />
+            <ReviewCard key={`${r.platform || "gitlab"}-${r.project_id}-${r.id}`} review={r} />
           ))}
         </div>
       </section>

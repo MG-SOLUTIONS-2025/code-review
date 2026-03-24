@@ -29,3 +29,6 @@ uv.lock
 # Docker volumes
 ollama-data/
 defectdojo-db-data/
+
+# Reference repos
+refs/

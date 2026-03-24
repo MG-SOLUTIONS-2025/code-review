@@ -1,0 +1,45 @@
+{
+  "title": "API Gateway",
+  "uid": "api-gateway",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate (req/s)",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{job=\"api-gateway\"}[1m])",
+          "legendFormat": "{{method}} {{handler}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error Rate (5xx)",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{job=\"api-gateway\",status=~\"5..\"}[1m])",
+          "legendFormat": "{{handler}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency p95 (s)",
+      "type": "timeseries",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"api-gateway\"}[5m]))",
+          "legendFormat": "{{handler}}"
+        }
+      ]
+    }
+  ]
+}

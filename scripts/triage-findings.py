@@ -8,6 +8,8 @@ import argparse
 import json
 import os
 import sys
+import time
+from pathlib import Path
 
 import requests
 
@@ -69,14 +71,25 @@ def chat_completion(llm_url: str, model: str, engine: str, messages: list[dict])
             "options": {"temperature": 0.1},
         }
 
-    resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
-    data = resp.json()
-
-    if engine == "vllm":
-        return data["choices"][0]["message"]["content"]
-    else:
-        return data.get("message", {}).get("content", "")
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            resp = requests.post(url, json=payload, timeout=120)
+            resp.raise_for_status()
+            data = resp.json()
+            if engine == "vllm":
+                return data["choices"][0]["message"]["content"]
+            else:
+                return data.get("message", {}).get("content", "")
+        except requests.exceptions.Timeout as e:
+            print(f"    LLM timeout on attempt {attempt}/3: {e}", file=sys.stderr)
+            last_exc = e
+        except Exception as e:
+            print(f"    LLM error on attempt {attempt}/3: {e}", file=sys.stderr)
+            last_exc = e
+        if attempt < 3:
+            time.sleep(2 ** attempt)
+    raise last_exc
 
 
 def parse_verdict(response_text: str) -> dict:
@@ -176,6 +189,15 @@ def main() -> None:
     parser.add_argument("--output", default="triage_results.json", help="Output JSON file")
     args = parser.parse_args()
 
+    # Validate output path stays within current directory tree
+    output_path = Path(args.output).resolve()
+    cwd = Path.cwd().resolve()
+    try:
+        output_path.relative_to(cwd)
+    except ValueError:
+        print(f"Error: Output path {args.output!r} escapes the working directory", file=sys.stderr)
+        sys.exit(1)
+
     # Load report
     if not os.path.exists(args.report):
         print(f"Error: Report not found: {args.report}", file=sys.stderr)
@@ -187,7 +209,8 @@ def main() -> None:
     findings = report.get("results", [])
     if not findings:
         print("No findings to triage.")
-        json.dump([], open(args.output, "w"))
+        with open(output_path, "w") as f:
+            json.dump([], f)
         sys.exit(0)
 
     # Load prompt template
@@ -231,7 +254,7 @@ def main() -> None:
         })
 
     # Write results
-    with open(args.output, "w") as f:
+    with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Results written to {args.output}")
 

@@ -26,17 +26,17 @@ export default function FindingsTable({ findings }) {
           {findings.map((f) => (
             <tr key={f.id} className="border-b border-border/50 hover:bg-white/[0.02]">
               <td className="py-3 pr-4">
-                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${severityColors[f.severity] || severityColors.Info}`}>
-                  {f.severity}
+                <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-medium ${severityColors[f.severity] || "text-gray-400"}`}>
+                  {f.severity || "Unknown"}
                 </span>
               </td>
-              <td className="py-3 pr-4 text-gray-300 max-w-md truncate">{f.title}</td>
+              <td className="py-3 pr-4 text-gray-300 max-w-md truncate">{f?.title || "Untitled"}</td>
               <td className="py-3 pr-4">
                 <span className={f.active ? "text-yellow-400" : "text-gray-500"}>
                   {f.active ? "Active" : "Resolved"}
                 </span>
               </td>
-              <td className="py-3 text-gray-500">{f.date}</td>
+              <td className="py-3 text-gray-500">{f?.date || "—"}</td>
             </tr>
           ))}
         </tbody>

@@ -6,6 +6,22 @@ import FindingsTable from "../components/FindingsTable";
 const SEVERITIES = ["All", "Critical", "High", "Medium", "Low", "Info"];
 const SCAN_TYPES = ["All", "Semgrep", "Gitleaks", "Trivy", "Triage"];
 
+function exportCsv(findings) {
+  const cols = ["id", "severity", "title", "active", "date"];
+  const headers = cols.join(",");
+  const rows = findings.map((f) =>
+    cols.map((c) => `"${String(f[c] ?? "").replace(/"/g, '""')}"`).join(",")
+  );
+  const csv = [headers, ...rows].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "findings.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ScanResults() {
   const [page, setPage] = useState(1);
   const [severity, setSeverity] = useState("All");
@@ -31,6 +47,13 @@ export default function ScanResults() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-white">Scan Results</h2>
         <div className="flex gap-3">
+          <button
+            onClick={() => exportCsv(findings)}
+            disabled={findings.length === 0}
+            className="px-3 py-2 rounded-lg text-sm bg-panel border border-border text-gray-300 hover:bg-white/5 transition-colors disabled:opacity-30"
+          >
+            Export CSV
+          </button>
           <select
             value={scanType}
             onChange={(e) => {

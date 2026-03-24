@@ -25,13 +25,13 @@ export default function Settings() {
 
   useEffect(() => {
     if (config.data?.config) {
-      const c = config.data.config;
-      setSelectedModel(c.config?.model || "");
-      const cmds = c.gitlab?.pr_commands || c.gitea?.pr_commands || [];
+      const cfg = config.data?.config || {};
+      setSelectedModel(cfg.config?.model || "");
+      const cmds = cfg.gitlab?.pr_commands || cfg.gitea?.pr_commands || [];
       setAutoReview(cmds.includes("/review"));
       setAutoDescribe(cmds.includes("/describe"));
       setAutoImprove(cmds.includes("/improve"));
-      setCustomInstructions(c.config?.custom_instructions || "");
+      setCustomInstructions(cfg.config?.custom_instructions || "");
     }
   }, [config.data]);
 
@@ -70,7 +70,8 @@ export default function Settings() {
   });
 
   const handleSave = () => {
-    const currentConfig = config.data?.config || {};
+    const cfg = config.data?.config || {};
+    const currentConfig = cfg;
     const prCommands = [
       ...(autoDescribe ? ["/describe"] : []),
       ...(autoReview ? ["/review"] : []),
@@ -83,8 +84,8 @@ export default function Settings() {
         model: selectedModel,
         custom_instructions: customInstructions,
       },
-      gitlab: { ...currentConfig.gitlab, pr_commands: prCommands },
-      gitea: { ...currentConfig.gitea, pr_commands: prCommands },
+      gitlab: { ...(currentConfig.gitlab || {}), pr_commands: prCommands },
+      gitea: { ...(currentConfig.gitea || {}), pr_commands: prCommands },
     });
   };
 

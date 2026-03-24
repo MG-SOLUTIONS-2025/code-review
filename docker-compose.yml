@@ -1,7 +1,7 @@
 services:
   # === LLM Serving ===
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.6.2
     container_name: ollama
     ports:
       - "11434:11434"
@@ -9,22 +9,20 @@ services:
       - ollama-data:/root/.ollama
     deploy:
       resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+        limits:
+          memory: 16g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 20s
     restart: unless-stopped
     networks:
       - code-review-net
 
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:0.7.3
     container_name: vllm
     profiles: ["vllm"]
     ports:
@@ -42,11 +40,8 @@ services:
       - "32768"
     deploy:
       resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+        limits:
+          memory: 24g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
       interval: 30s
@@ -66,8 +61,10 @@ services:
       CONFIG.MODEL: "${LLM_MODEL_NAME:-ollama/${OLLAMA_MODEL:-qwen2.5-coder:32b}}"
       OLLAMA.API_BASE: "${LLM_API_BASE:-http://ollama:11434}"
       OPENAI.KEY: "not-needed"
-      ${GIT_PLATFORM:-GITLAB}.URL: "${GIT_BASE_URL}"
-      ${GIT_PLATFORM:-GITLAB}.PERSONAL_ACCESS_TOKEN: "${GIT_TOKEN}"
+      GITLAB.URL: "${GIT_BASE_URL}"
+      GITLAB.PERSONAL_ACCESS_TOKEN: "${GIT_TOKEN}"
+      GITEA.URL: "${GIT_BASE_URL}"
+      GITEA.PERSONAL_ACCESS_TOKEN: "${GIT_TOKEN}"
       WEBHOOK_SECRET: "${PR_AGENT_WEBHOOK_SECRET}"
     volumes:
       - ./config/pr-agent/configuration.toml:/app/pr_agent/settings/configuration.toml:ro
@@ -87,7 +84,7 @@ services:
 
   # === DefectDojo ===
   defectdojo-db:
-    image: postgres:16-alpine
+    image: postgres:16.4-alpine
     container_name: defectdojo-db
     environment:
       POSTGRES_DB: defectdojo
@@ -105,7 +102,7 @@ services:
       - code-review-net
 
   defectdojo-redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     container_name: defectdojo-redis
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -130,7 +127,17 @@ services:
       DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
       DD_INITIALIZE: "true"
       DD_ADMIN_PASSWORD: "${DEFECTDOJO_ADMIN_PASSWORD:-changeme}"
-    entrypoint: ["/entrypoint-initializer.sh"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ "$${DD_SECRET_KEY}" = "change-this-to-a-random-string" ]; then
+          echo "ERROR: DEFECTDOJO_SECRET_KEY must be changed from the default value" && exit 1
+        fi
+        if [ "$${DD_ADMIN_PASSWORD}" = "changeme" ]; then
+          echo "ERROR: DEFECTDOJO_ADMIN_PASSWORD must be changed from the default value" && exit 1
+        fi
+        exec /entrypoint-initializer.sh
     networks:
       - code-review-net
 
@@ -144,11 +151,15 @@ services:
       DD_DATABASE_URL: "postgresql://defectdojo:defectdojo@defectdojo-db:5432/defectdojo"
       DD_CELERY_BROKER_URL: "redis://defectdojo-redis:6379/0"
       DD_SECRET_KEY: "${DEFECTDOJO_SECRET_KEY:-change-this-to-a-random-string}"
-      DD_ALLOWED_HOSTS: "*"
+      DD_ALLOWED_HOSTS: "${DD_ALLOWED_HOSTS:-*}"
     ports:
-      - "8080:8080"
+      - "8080:8081"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/"]
+      test: ["CMD-SHELL", "python3 -c \"import socket; s=socket.create_connection(('localhost',8081),5); s.close()\" 2>/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -189,7 +200,7 @@ services:
 
   # === Code Intelligence ===
   tabby:
-    image: tabbyml/tabby:latest
+    image: tabbyml/tabby:0.22.0
     container_name: tabby
     profiles: ["tabby"]
     ports:
@@ -223,24 +234,31 @@ services:
     environment:
       OLLAMA_URL: "http://ollama:11434"
       VLLM_URL: "http://vllm:8000"
-      DEFECTDOJO_URL: "http://defectdojo-web:8080"
+      DEFECTDOJO_URL: "http://defectdojo-web:8081"
       PR_AGENT_URL: "http://pr-agent:3000"
       TABBY_URL: "${TABBY_URL:-}"
       INFERENCE_ENGINE: "${INFERENCE_ENGINE:-ollama}"
-      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:80}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3102}"
     volumes:
       - ./config/prompts:/app/config/prompts
       - ./config/pr-agent:/app/config/pr-agent
     ports:
       - "8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     depends_on:
       ollama:
         condition: service_healthy
+      defectdojo-web:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')\" 2>/dev/null"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - code-review-net
@@ -253,25 +271,31 @@ services:
       VITE_API_URL: "/api"
     ports:
       - "5173:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
     depends_on:
       - api-gateway
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/ > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - code-review-net
 
   # === Reverse Proxy ===
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     container_name: nginx
     ports:
-      - "80:80"
+      - "3102:80"
     volumes:
       - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/.htpasswd:/etc/nginx/.htpasswd:ro
     depends_on:
       - dashboard
       - api-gateway
@@ -281,11 +305,45 @@ services:
     networks:
       - code-review-net
 
+  # === Observability ===
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - code-review-net
+
 volumes:
   ollama-data:
   vllm-models:
   tabby-data:
   defectdojo-db-data:
+  prometheus-data:
+  grafana-data:
 
 networks:
   code-review-net:

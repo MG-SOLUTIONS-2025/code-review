@@ -10,7 +10,7 @@ SERVICES = {
         "url": os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/tags",
     },
     "DefectDojo": {
-        "url": os.environ.get("DEFECTDOJO_URL", "http://localhost:8080") + "/api/v2/",
+        "url": os.environ.get("DEFECTDOJO_URL", "http://localhost:8081") + "/api/v2/",
     },
     "API Gateway": {
         "url": os.environ.get("API_GATEWAY_URL", "http://localhost:8000") + "/api/health",
@@ -21,13 +21,19 @@ SERVICES = {
     "PR-Agent": {
         "url": os.environ.get("PR_AGENT_URL", "http://localhost:3000") + "/",
     },
+    "Prometheus": {
+        "url": os.environ.get("PROMETHEUS_URL", "http://localhost:9090") + "/-/healthy",
+    },
+    "Grafana": {
+        "url": os.environ.get("GRAFANA_URL", "http://localhost:3001") + "/api/health",
+    },
 }
 
 
 def check_service(name: str, url: str) -> bool:
     try:
         resp = requests.get(url, timeout=5)
-        ok = resp.status_code < 500
+        ok = 200 <= resp.status_code < 300
         status = f"OK ({resp.status_code})" if ok else f"FAIL ({resp.status_code})"
         print(f"  {name:15s} {status:15s} {url}")
         return ok

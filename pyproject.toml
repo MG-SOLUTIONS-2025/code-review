@@ -1,7 +1,7 @@
 [project]
 name = "selfhosted-code-review"
 version = "0.1.0"
-description = "Add your description here"
+description = "Self-hosted AI code review platform — a privacy-first alternative to CodeRabbit"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []

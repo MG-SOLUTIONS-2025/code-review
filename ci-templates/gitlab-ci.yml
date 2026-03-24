@@ -18,6 +18,7 @@ semgrep:
   artifacts:
     paths: [semgrep_report.json]
     when: always
+    expire_in: 90 days
 
 # --- Secrets ---
 gitleaks:
@@ -31,7 +32,8 @@ gitleaks:
   artifacts:
     paths: [gitleaks_report.json]
     when: always
-  allow_failure: false
+    expire_in: 90 days
+  allow_failure: true
 
 # --- Dependencies (MR only) ---
 trivy:
@@ -44,6 +46,7 @@ trivy:
   artifacts:
     paths: [trivy_report.json]
     when: always
+    expire_in: 90 days
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
@@ -51,6 +54,7 @@ trivy:
 triage_findings:
   stage: triage_findings
   image: python:3.12-slim
+  timeout: 1h
   needs: [semgrep]
   script:
     - pip install requests -q
@@ -70,6 +74,7 @@ triage_findings:
   artifacts:
     paths: [triage_results.json]
     when: always
+    expire_in: 90 days
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
@@ -77,21 +82,23 @@ triage_findings:
 ai_review:
   stage: ai_review
   image: curlimages/curl:latest
+  variables:
+    GATEWAY_URL: "${GATEWAY_URL:-http://api-gateway:8000}"
   script:
     - |
-      curl -s -X POST "http://${PR_AGENT_HOST:-pr-agent}:3000/api/v1/gitlab_webhooks" \
+      curl -sf -X POST "${GATEWAY_URL}/api/reviews/run" \
         -H "Content-Type: application/json" \
-        -H "X-Gitlab-Token: ${PR_AGENT_WEBHOOK_SECRET}" \
+        -H "Authorization: Bearer ${GATEWAY_API_TOKEN:-}" \
         -d "{
-          \"object_kind\": \"merge_request\",
-          \"project\": {\"web_url\": \"${CI_PROJECT_URL}\"},
-          \"object_attributes\": {
-            \"iid\": ${CI_MERGE_REQUEST_IID},
-            \"action\": \"open\"
-          }
-        }"
+          \"platform\": \"gitlab\",
+          \"project_id\": \"${CI_PROJECT_ID}\",
+          \"mr_id\": ${CI_MERGE_REQUEST_IID},
+          \"force\": false
+        }" \
+        --max-time 600 || exit 1
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  timeout: 15m
 
 # --- Upload to DefectDojo ---
 upload_results:

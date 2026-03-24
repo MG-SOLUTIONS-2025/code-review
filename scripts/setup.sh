@@ -124,7 +124,7 @@ docker compose $COMPOSE_PROFILES up -d
 # Step 4: Wait for DefectDojo
 info "Waiting for DefectDojo to initialize (this takes 1-2 minutes)..."
 RETRIES=0
-until docker compose exec defectdojo-web curl -sf http://localhost:8080/api/v2/ &>/dev/null || [ $RETRIES -eq 30 ]; do
+until docker compose exec defectdojo-web curl -sf http://localhost:8081/api/v2/ &>/dev/null || [ $RETRIES -eq 30 ]; do
     sleep 5
     RETRIES=$((RETRIES + 1))
 done
@@ -138,9 +138,9 @@ fi
 info ""
 info "=== Setup Complete ==="
 info "Engine:      ${ENGINE}"
-info "Dashboard:   http://localhost:5173"
-info "API Gateway: http://localhost:8000"
-info "DefectDojo:  http://localhost:8080  (admin / ${DEFECTDOJO_ADMIN_PASSWORD:-changeme})"
+info "Dashboard:   http://localhost:3102        (via nginx proxy)"
+info "API Gateway: http://localhost:8000         (direct)"
+info "DefectDojo:  http://localhost:3102/defectdojo/  (admin / ${DEFECTDOJO_ADMIN_PASSWORD:-changeme})"
 if [ "$ENGINE" = "vllm" ]; then
     info "vLLM:        http://localhost:8001"
 else
@@ -149,9 +149,14 @@ fi
 if [ "${ENABLE_TABBY:-false}" = "true" ]; then
     info "TabbyML:     http://localhost:8082"
 fi
-info "Nginx Proxy: http://localhost:80"
+info "Grafana:     http://localhost:3001         (admin / ${GRAFANA_ADMIN_PASSWORD:-admin})"
+info "Prometheus:  http://localhost:9090"
 info ""
 info "Next steps:"
 info "  1. Log into DefectDojo, create an API token, add it to .env as DEFECTDOJO_API_TOKEN"
-info "  2. Configure your git platform webhook to point to http://<this-host>/webhook"
-info "  3. Create a DefectDojo product and engagement for your project"
+info "  2. Restart: docker compose restart api-gateway"
+info "  3. Configure your git platform webhook to point to http://<this-host>:3102/api/webhook"
+info "  4. Create a DefectDojo product and engagement for your project"
+info ""
+info "To verify everything is healthy:"
+info "  python3 scripts/healthcheck.py"

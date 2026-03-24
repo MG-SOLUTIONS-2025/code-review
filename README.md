@@ -37,21 +37,20 @@ A privacy-first, self-hosted AI code review platform. Drop-in alternative to Cod
 
 ```bash
 # 1. Clone and configure
-git clone <repo-url> && cd selfhosted-code-review
+git clone git@mguan:MG-SOLUTIONS-2025/code-review.git && cd code-review
 cp .env.example .env
-# Edit .env: set GIT_PLATFORM, GIT_BASE_URL, GIT_TOKEN, secrets
+# Edit .env: set GIT_PLATFORM, GIT_BASE_URL, GIT_TOKEN, and secrets
+#   - DEFECTDOJO_SECRET_KEY  → run: openssl rand -hex 32
+#   - DEFECTDOJO_ADMIN_PASSWORD, BASIC_AUTH_PASSWORD → change from defaults
 
-# 2. (Optional) Run setup wizard — checks GPU, generates passwords
+# 2. Run setup — generates nginx auth, checks GPU, pulls LLM model, starts services
 bash scripts/setup.sh
 
-# 3. Start all services
-docker compose up -d
-
-# 4. Wait for services to initialize (~2 min for LLM model pull)
+# 3. Verify all services are healthy
 python3 scripts/healthcheck.py
 
-# 5. Access the dashboard
-open http://localhost:3102   # login: admin / changeme (set in .env)
+# 4. Access the dashboard
+open http://localhost:3102   # login: admin / changeme (or what you set in .env)
 ```
 
 ### GPU vs CPU

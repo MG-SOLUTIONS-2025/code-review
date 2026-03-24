@@ -42,17 +42,34 @@ Edit `.env` with your values:
 
 See `.env.example` for the full list with descriptions.
 
-## 2. Start Services
+## 2. Run Setup
 
-### With GPU (recommended)
+The setup script generates nginx auth credentials, detects GPU, pulls the LLM model, and starts all services:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+bash scripts/setup.sh
 ```
 
-### CPU only
+This is the **recommended way to start** — it handles everything in order.
+
+### Manual Start (alternative)
+
+If you prefer to start manually, you must generate the `.htpasswd` file first:
 
 ```bash
+# Generate nginx basic auth (required — nginx won't start without it)
+mkdir -p config/nginx
+htpasswd -bc config/nginx/.htpasswd admin changeme
+# Or without htpasswd: echo "admin:$(openssl passwd -apr1 changeme)" > config/nginx/.htpasswd
+```
+
+Then start:
+
+```bash
+# GPU (recommended)
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+
+# CPU only
 docker compose up -d
 ```
 
@@ -184,6 +201,35 @@ Edit prompt templates from the dashboard (**Settings > Prompts** tab) or directl
 | `summarize.md` | Quick classify: APPROVED vs NEEDS_REVIEW |
 | `triage.md` | SAST finding triage (true/false positive) |
 | `security-audit.md` | Deep security audit with CWE references |
+
+## Running Tests
+
+### Backend (API Gateway)
+
+```bash
+cd api-gateway
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]" pytest-cov
+pytest tests/ -v --cov=src/gateway --cov-report=term-missing
+```
+
+Expected: 274 tests, 100% coverage.
+
+### Smoke Test (running stack)
+
+After `docker compose up -d`, verify the full stack:
+
+```bash
+# Health check — all services should show OK
+python3 scripts/healthcheck.py
+
+# API responds
+curl -s http://localhost:8000/api/health | python3 -m json.tool
+
+# Dashboard loads
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5173/
+```
 
 ## Updating
 
